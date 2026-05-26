@@ -1,4 +1,4 @@
-extern alias JetBrainsAnnotations;
+﻿extern alias JetBrainsAnnotations;
 using System;
 using KSP.Localization;
 using UnityEngine;
@@ -168,16 +168,28 @@ namespace MuMech
                     timeScale--;
             }
 
-            float maxX = (float)(downrange
-                ? recorder.Maximums[(int)MechJebModuleFlightRecorder.RecordType.DOWN_RANGE]
-                : recorder.Maximums[(int)MechJebModuleFlightRecorder.RecordType.TIME_SINCE_MARK]);
+            float maxX;
+            if (recorder.Mode == MechJebModuleFlightRecorder.RecordMode.Scrolling && !downrange)
+            {
+                maxX = recorder.ScrollWindowSeconds;
+            }
+            else
+            {
+                maxX = (float)(downrange
+                    ? recorder.Maximums[(int)MechJebModuleFlightRecorder.RecordType.DOWN_RANGE]
+                    : recorder.Maximums[(int)MechJebModuleFlightRecorder.RecordType.TIME_SINCE_MARK]);
+            }
 
             double maxXScaled = (downrange ? maxX : maxX / precision) / width;
             double autoScaleX = Math.Max(Math.Ceiling(Math.Log(maxXScaled, 2)), 0);
             double manualScaleX = downrange ? downrangeScale : timeScale;
             double activeScaleX = autoScale ? autoScaleX : manualScaleX;
 
-            double scaleX = downrange ? Math.Pow(2, activeScaleX) : precision * Math.Pow(2, activeScaleX);
+            double scaleX;
+            if (recorder.Mode == MechJebModuleFlightRecorder.RecordMode.Scrolling && !downrange)
+                scaleX = (double)recorder.ScrollWindowSeconds / width;
+            else
+                scaleX = downrange ? Math.Pow(2, activeScaleX) : precision * Math.Pow(2, activeScaleX);
 
             GUILayout.Label(downrange ? scaleX.ToSI(2) + "m/px" : GuiUtils.TimeToDHMS(scaleX, 1) + "/px", GuiUtils.LayoutNoExpandWidth);
 
@@ -235,9 +247,33 @@ namespace MuMech
                 recorder.DumpCsv();
             }
 
-            GUILayout.Label(
-                Localizer.Format("#MechJeb_Flightrecord_Label3", (100 * recorder.HistoryIdx / (float)recorder.History.Length).ToString("F1")),
-                GuiUtils.LayoutNoExpandWidth); //Storage: <<1>> %
+            if (recorder.Mode == MechJebModuleFlightRecorder.RecordMode.FixedBuffer)
+                GUILayout.Label(
+                    Localizer.Format("#MechJeb_Flightrecord_Label3", (100 * recorder.HistoryIdx / (float)recorder.History.Length).ToString("F1")),
+                    GuiUtils.LayoutNoExpandWidth); //Storage: <<1>> %
+            else
+                GUILayout.Label("Scrolling", GuiUtils.LayoutNoExpandWidth);
+
+            GUILayout.EndHorizontal();
+            GUILayout.BeginHorizontal();
+
+            if (GUILayout.Toggle(recorder.Mode == MechJebModuleFlightRecorder.RecordMode.FixedBuffer, "Fixed", GuiUtils.LayoutNoExpandWidth))
+                recorder.Mode = MechJebModuleFlightRecorder.RecordMode.FixedBuffer;
+            if (GUILayout.Toggle(recorder.Mode == MechJebModuleFlightRecorder.RecordMode.Scrolling, "Scroll", GuiUtils.LayoutNoExpandWidth))
+            {
+                recorder.Mode = MechJebModuleFlightRecorder.RecordMode.Scrolling;
+                int requiredSize = recorder.ScrollWindowSize;
+                if (recorder.History.Length != requiredSize)
+                    recorder.History = new MechJebModuleFlightRecorder.RecordStruct[requiredSize];
+            }
+
+            if (recorder.Mode == MechJebModuleFlightRecorder.RecordMode.Scrolling)
+            {
+                GUILayout.Label(" Window:", GuiUtils.LayoutNoExpandWidth);
+                if (GUILayout.Toggle(recorder.ScrollWindowSeconds == 10, " 10s", GuiUtils.LayoutNoExpandWidth)) recorder.ScrollWindowSeconds = 10;
+                if (GUILayout.Toggle(recorder.ScrollWindowSeconds == 60, " 60s", GuiUtils.LayoutNoExpandWidth)) recorder.ScrollWindowSeconds = 60;
+                if (GUILayout.Toggle(recorder.ScrollWindowSeconds == 300, " 300s", GuiUtils.LayoutNoExpandWidth)) recorder.ScrollWindowSeconds = 300;
+            }
 
             GUILayout.EndHorizontal();
 
@@ -328,6 +364,16 @@ namespace MuMech
                 graphStates[(int)MechJebModuleFlightRecorder.RecordType.STEERING_LOSSES].display,
                 Localizer.Format("#MechJeb_Flightrecord_checkbox17"),
                 GuiUtils.LayoutNoExpandWidth); //"Steering Loss"
+
+            GUI.color = XKCDColors.LightBlue;
+            graphStates[(int)MechJebModuleFlightRecorder.RecordType.APOAPSIS].display = GUILayout.Toggle(
+                graphStates[(int)MechJebModuleFlightRecorder.RecordType.APOAPSIS].display, "Apoapsis",
+                GuiUtils.LayoutNoExpandWidth);
+
+            GUI.color = XKCDColors.LightGreen;
+            graphStates[(int)MechJebModuleFlightRecorder.RecordType.PERIAPSIS].display = GUILayout.Toggle(
+                graphStates[(int)MechJebModuleFlightRecorder.RecordType.PERIAPSIS].display, "Periapsis",
+                GuiUtils.LayoutNoExpandWidth);
 
             GUI.color = color;
 
@@ -497,6 +543,22 @@ namespace MuMech
                     scaleIdx = (int)MechJebModuleFlightRecorder.RecordType.STEERING_LOSSES;
             }
 
+            if (graphStates[(int)MechJebModuleFlightRecorder.RecordType.APOAPSIS].display)
+            {
+                GUI.color = XKCDColors.LightBlue;
+                if (GUILayout.Toggle(scaleIdx == (int)MechJebModuleFlightRecorder.RecordType.APOAPSIS,
+                        "Apoapsis", GuiUtils.LayoutExpandWidth))
+                    scaleIdx = (int)MechJebModuleFlightRecorder.RecordType.APOAPSIS;
+            }
+
+            if (graphStates[(int)MechJebModuleFlightRecorder.RecordType.PERIAPSIS].display)
+            {
+                GUI.color = XKCDColors.LightGreen;
+                if (GUILayout.Toggle(scaleIdx == (int)MechJebModuleFlightRecorder.RecordType.PERIAPSIS,
+                        "Periapsis", GuiUtils.LayoutExpandWidth))
+                    scaleIdx = (int)MechJebModuleFlightRecorder.RecordType.PERIAPSIS;
+            }
+
             GUI.color = color;
 
             GUILayout.EndVertical();
@@ -558,6 +620,10 @@ namespace MuMech
                     DrawnPath(r, MechJebModuleFlightRecorder.RecordType.DRAG_LOSSES, hPos, scaleX, downrange, XKCDColors.LightBrown);
                 if (graphStates[(int)MechJebModuleFlightRecorder.RecordType.STEERING_LOSSES].display)
                     DrawnPath(r, MechJebModuleFlightRecorder.RecordType.STEERING_LOSSES, hPos, scaleX, downrange, XKCDColors.Cerise);
+                if (graphStates[(int)MechJebModuleFlightRecorder.RecordType.APOAPSIS].display)
+                    DrawnPath(r, MechJebModuleFlightRecorder.RecordType.APOAPSIS, hPos, scaleX, downrange, XKCDColors.LightBlue);
+                if (graphStates[(int)MechJebModuleFlightRecorder.RecordType.PERIAPSIS].display)
+                    DrawnPath(r, MechJebModuleFlightRecorder.RecordType.PERIAPSIS, hPos, scaleX, downrange, XKCDColors.LightGreen);
 
                 // Fix : the scales are different so the result is not useful
                 //if (ascentPath)
@@ -594,9 +660,26 @@ namespace MuMech
             }
         }
 
+        private int PhysicalIndex(int logicalIndex)
+        {
+            if (recorder.Mode == MechJebModuleFlightRecorder.RecordMode.FixedBuffer)
+                return logicalIndex;
+            int windowSize = recorder.ScrollWindowSize;
+            int oldest = (recorder.HistoryIdx + 1) % windowSize;
+            return (oldest + logicalIndex) % windowSize;
+        }
+
+        private int RecordCount()
+        {
+            if (recorder.Mode == MechJebModuleFlightRecorder.RecordMode.FixedBuffer)
+                return recorder.HistoryIdx + 1;
+            return recorder.ScrollBufferFull ? recorder.History.Length : recorder.HistoryIdx + 1;
+        }
+
         private void DrawnPath(Rect r, MechJebModuleFlightRecorder.RecordType type, float minimum, double scaleX, bool downRange, Color color)
         {
-            if (recorder.History.Length <= 2 || recorder.HistoryIdx == 0)
+            int count = RecordCount();
+            if (recorder.History.Length <= 2 || count <= 1)
                 return;
 
             graphState graphState = graphStates[(int)type];
@@ -606,35 +689,50 @@ namespace MuMech
             double invScaleX = 1 / scaleX;
             double invScaleY = 1 / scaleY;
 
-            float xBase = (float)(r.xMin - minimum * invScaleX);
-            float yBase = r.yMax + (float)(graphState.minimum * invScaleY);
-
-            int t = 0;
-            while (t < recorder.HistoryIdx && t < recorder.History.Length &&
-                   xBase + (float)((downRange ? recorder.History[t].DownRange : recorder.History[t].TimeSinceMark) * invScaleX) <= r.xMin)
+            float xBase;
+            if (recorder.Mode == MechJebModuleFlightRecorder.RecordMode.Scrolling && !downRange)
             {
-                t++;
+                double newestTime = recorder.History[recorder.HistoryIdx].TimeSinceMark;
+                double windowStart = newestTime - recorder.ScrollWindowSeconds;
+                xBase = (float)(r.xMin - windowStart * invScaleX);
+            }
+            else
+            {
+                xBase = (float)(r.xMin - minimum * invScaleX);
             }
 
-            var p1 = new Vector2(xBase + (float)((downRange ? recorder.History[t].DownRange : recorder.History[t].TimeSinceMark) * invScaleX),
-                yBase - (float)(recorder.History[t][type] * invScaleY));
-            var p2 = new Vector2();
+            float yBase = r.yMax + (float)(graphState.minimum * invScaleY);
 
-            while (t <= recorder.HistoryIdx && t < recorder.History.Length)
+            int logical = 0;
+            while (logical < count - 1)
             {
-                MechJebModuleFlightRecorder.RecordStruct rec = recorder.History[t];
-                p2.x = xBase + (float)((downRange ? rec.DownRange : rec.TimeSinceMark) * invScaleX);
-                p2.y = yBase - (float)(rec[type] * invScaleY);
+                MechJebModuleFlightRecorder.RecordStruct rec = recorder.History[PhysicalIndex(logical)];
+                if (xBase + (float)((downRange ? rec.DownRange : rec.TimeSinceMark) * invScaleX) > r.xMin)
+                    break;
+                logical++;
+            }
 
-                // skip 0 length line but always drawn the first 2 points
-                if (r.Contains(p2) && ((p1 - p2).sqrMagnitude >= 1.0 || t < 2))
+            {
+                MechJebModuleFlightRecorder.RecordStruct rec0 = recorder.History[PhysicalIndex(logical)];
+                var p1 = new Vector2(xBase + (float)((downRange ? rec0.DownRange : rec0.TimeSinceMark) * invScaleX),
+                   yBase - (float)(rec0[type] * invScaleY));
+                var p2 = new Vector2();
+
+                while (logical < count)
                 {
-                    Drawing.DrawLine(p1, p2, color, 2, true);
-                    p1.x = p2.x;
-                    p1.y = p2.y;
-                }
+                    MechJebModuleFlightRecorder.RecordStruct rec = recorder.History[PhysicalIndex(logical)];
+                    p2.x = xBase + (float)((downRange ? rec.DownRange : rec.TimeSinceMark) * invScaleX);
+                    p2.y = yBase - (float)(rec[type] * invScaleY);
 
-                t++;
+                    if (r.Contains(p2) && ((p1 - p2).sqrMagnitude >= 1.0 || logical < 2))
+                    {
+                        Drawing.DrawLine(p1, p2, color, 2, true);
+                        p1.x = p2.x;
+                        p1.y = p2.y;
+                    }
+
+                    logical++;
+                }
             }
         }
 

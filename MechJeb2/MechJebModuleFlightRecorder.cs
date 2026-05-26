@@ -30,6 +30,8 @@ namespace MuMech
             public double DragLosses;
             public double SteeringLosses;
             public double DeltaVExpended;
+            public double Apoapsis;
+            public double Periapsis;
 
             public double this[RecordType type]
             {
@@ -73,6 +75,10 @@ namespace MuMech
                             return SteeringLosses;
                         case RecordType.DELTA_V_EXPENDED:
                             return DeltaVExpended;
+                        case RecordType.APOAPSIS:
+                            return Apoapsis;
+                        case RecordType.PERIAPSIS:
+                            return Periapsis;
                         default:
                             return 0;
                     }
@@ -99,7 +105,9 @@ namespace MuMech
             GRAVITY_LOSSES,
             DRAG_LOSSES,
             STEERING_LOSSES,
-            DELTA_V_EXPENDED
+            DELTA_V_EXPENDED,
+            APOAPSIS,
+            PERIAPSIS
         }
 
         public RecordStruct[] History = new RecordStruct[1];
@@ -116,6 +124,18 @@ namespace MuMech
 
         [Persistent(pass = (int)Pass.GLOBAL)]
         public bool Downrange = true;
+
+        public enum RecordMode { FixedBuffer, Scrolling }
+
+        [Persistent(pass = (int)Pass.GLOBAL)]
+        public RecordMode Mode = RecordMode.FixedBuffer;
+
+        [Persistent(pass = (int)Pass.GLOBAL)]
+        public int ScrollWindowSeconds = 60;
+
+        public bool ScrollBufferFull = false;
+
+        public int ScrollWindowSize => (int)(ScrollWindowSeconds / Precision);
 
         [Persistent(pass = (int)Pass.GLOBAL)]
         public bool RealAtmo = false;
@@ -245,6 +265,7 @@ namespace MuMech
             }
 
             HistoryIdx = 0;
+            ScrollBufferFull = false;
             Record(HistoryIdx);
         }
 
@@ -258,8 +279,9 @@ namespace MuMech
 
         public override void OnStart(PartModule.StartState state)
         {
-            if (History.Length != HistorySize)
-                History = new RecordStruct[HistorySize];
+            int requiredSize = Mode == RecordMode.Scrolling ? ScrollWindowSize : HistorySize;
+            if (History.Length != requiredSize)
+                History = new RecordStruct[requiredSize];
             Users.Add(this); //flight recorder should always run.
         }
 
@@ -292,11 +314,26 @@ namespace MuMech
 
             //historyIdx = Mathf.Min(Mathf.FloorToInt((float)(timeSinceMark / precision)), history.Length - 1);
 
-            if (VesselState.time >= _lastRecordTime + Precision && HistoryIdx < History.Length - 1)
+            if (VesselState.time >= _lastRecordTime + Precision)
             {
-                _lastRecordTime = VesselState.time;
-                HistoryIdx++;
-                Record(HistoryIdx);
+                if (Mode == RecordMode.FixedBuffer)
+                {
+                    if (HistoryIdx < History.Length - 1)
+                    {
+                        _lastRecordTime = VesselState.time;
+                        HistoryIdx++;
+                        Record(HistoryIdx);
+                    }
+                }
+                else
+                {
+                    _lastRecordTime = VesselState.time;
+                    int nextIdx = (HistoryIdx + 1) % ScrollWindowSize;
+                    if (nextIdx < HistoryIdx)
+                        ScrollBufferFull = true;
+                    HistoryIdx = nextIdx;
+                    Record(HistoryIdx);
+                }
                 //if (TimeWarp.WarpMode == TimeWarp.Modes.HIGH)
                 //    print("WRP " + historyIdx + " " + history[historyIdx].downRange.ToString("F0") + " " + history[historyIdx].AoA.ToString("F2"));
                 //else
@@ -322,6 +359,8 @@ namespace MuMech
             History[idx].DragLosses     = DragLosses;
             History[idx].SteeringLosses = SteeringLosses;
             History[idx].DeltaVExpended = DeltaVExpended;
+            History[idx].Apoapsis       = Vessel.orbit.ApA;
+            History[idx].Periapsis      = Vessel.orbit.PeA;
 
             if (TimeWarp.WarpMode != TimeWarp.Modes.HIGH)
             {
